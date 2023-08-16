@@ -35,6 +35,8 @@ open class NWWebSocket: WebSocketConnection {
     private var disconnectionWorkItem: DispatchWorkItem?
     private var isMigratingConnection = false
 
+    private var abortedWhileWaitingCount = 0
+
     // MARK: - Initialization
 
     /// Creates a `NWWebSocket` instance which connects to a socket `url` with some configuration `options`.
@@ -225,7 +227,16 @@ open class NWWebSocket: WebSocketConnection {
             delegate?.webSocketDidConnect(connection: self)
         case .waiting(let error):
             isMigratingConnection = false
-            tearDownConnection(error: error)
+            reportErrorOrDisconnection(error)
+            if case let .posix(code) = error,
+               code == .ECONNABORTED {
+                abortedWhileWaitingCount += 1
+
+                if abortedWhileWaitingCount > 10 {
+                    tearDownConnection(error: error)
+                    abortedWhileWaitingCount = 0
+                }
+            }
         case .failed(let error):
             isMigratingConnection = false
             tearDownConnection(error: error)
@@ -329,21 +340,21 @@ open class NWWebSocket: WebSocketConnection {
                          contentContext: context,
                          isComplete: true,
                          completion: .contentProcessed({ [weak self] error in
-                            guard let self = self else {
-                                return
-                            }
+            guard let self = self else {
+                return
+            }
 
-                            // If a connection closure was sent, inform delegate on completion
-                            if let socketMetadata = context.protocolMetadata.first as? NWProtocolWebSocket.Metadata,
-                               socketMetadata.opcode == .close {
-                                self.scheduleDisconnectionReporting(closeCode: socketMetadata.closeCode,
-                                                                    reason: data)
-                            }
+            // If a connection closure was sent, inform delegate on completion
+            if let socketMetadata = context.protocolMetadata.first as? NWProtocolWebSocket.Metadata,
+               socketMetadata.opcode == .close {
+                self.scheduleDisconnectionReporting(closeCode: socketMetadata.closeCode,
+                                                    reason: data)
+            }
 
-                            if let error = error {
-                                self.reportErrorOrDisconnection(error)
-                            }
-                         }))
+            if let error = error {
+                self.reportErrorOrDisconnection(error)
+            }
+        }))
     }
 
     // MARK: Connection cleanup
