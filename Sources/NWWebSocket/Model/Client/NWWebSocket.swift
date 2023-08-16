@@ -225,7 +225,7 @@ open class NWWebSocket: WebSocketConnection {
             delegate?.webSocketDidConnect(connection: self)
         case .waiting(let error):
             isMigratingConnection = false
-            reportErrorOrDisconnection(error)
+            tearDownConnection(error: error)
         case .failed(let error):
             isMigratingConnection = false
             tearDownConnection(error: error)
