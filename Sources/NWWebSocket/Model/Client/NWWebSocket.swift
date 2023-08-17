@@ -25,6 +25,8 @@ open class NWWebSocket: WebSocketConnection {
         connection?.state ?? .setup
     }
 
+    private let errorWhileWaitingLimit = 20
+
     // MARK: - Private properties
 
     private var connection: NWConnection?
@@ -35,7 +37,7 @@ open class NWWebSocket: WebSocketConnection {
     private var disconnectionWorkItem: DispatchWorkItem?
     private var isMigratingConnection = false
 
-    private var abortedWhileWaitingCount = 0
+    private var errorWhileWaitingCount = 0
 
     // MARK: - Initialization
 
@@ -228,21 +230,21 @@ open class NWWebSocket: WebSocketConnection {
         case .waiting(let error):
             isMigratingConnection = false
             reportErrorOrDisconnection(error)
-            if case let .posix(code) = error,
-               code == .ECONNABORTED {
-                abortedWhileWaitingCount += 1
 
-                if abortedWhileWaitingCount > 10 {
-                    tearDownConnection(error: error)
-                    abortedWhileWaitingCount = 0
-                }
+            /// Workaround to prevent loop while reconnecting
+            errorWhileWaitingCount += 1
+            if errorWhileWaitingCount >= errorWhileWaitingLimit {
+                tearDownConnection(error: error)
+                errorWhileWaitingCount = 0
             }
         case .failed(let error):
+            errorWhileWaitingCount = 0
             isMigratingConnection = false
             tearDownConnection(error: error)
         case .setup, .preparing:
             break
         case .cancelled:
+            errorWhileWaitingCount = 0
             tearDownConnection(error: nil)
         @unknown default:
             fatalError()
